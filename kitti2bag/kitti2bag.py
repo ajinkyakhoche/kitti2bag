@@ -126,12 +126,6 @@ def save_camera_data(bag, kitti_type, kitti, util, bridge, camera, camera_frame_
     elif kitti_type.find("odom") != -1:
         camera_pad = '{0:01d}'.format(camera)
         image_path = os.path.join(kitti.sequence_path, 'image_{}'.format(camera_pad))
-        # if kitti_type == 'odom_color':
-        #     image_path = os.path.join(kitti.base_path, 'data_odometry_color',
-        #                 'dataset', 'sequences', kitti.sequence, 'image_{}'.format(camera_pad))
-        # elif kitti_type == 'odom_gray':
-        #     image_path = os.path.join(kitti.base_path, 'data_odometry_gray',
-        #                 'dataset', 'sequences', kitti.sequence, 'image_{}'.format(camera_pad))
         image_filenames = sorted(os.listdir(image_path))
         image_datetimes = map(lambda x: initial_time + x.total_seconds(), kitti.timestamps)
         
