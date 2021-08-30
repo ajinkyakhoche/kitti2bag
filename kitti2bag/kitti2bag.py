@@ -400,10 +400,10 @@ def run_kitti2bag():
         #     kitti.load_poses()
 
         try:
-            # util = pykitti.utils.read_calib_file(os.path.join(args.dir,'sequences',args.sequence, 'calib.txt'))
-            util = pykitti.utils.read_calib_file(os.path.join(args.dir,
-                        'data_odometry_calib', 'dataset', 'sequences', 
-                        args.sequence, 'calib.txt'))
+            util = pykitti.utils.read_calib_file(os.path.join(args.dir,'sequences',args.sequence, 'calib.txt'))
+            # util = pykitti.utils.read_calib_file(os.path.join(args.dir,
+            #             'data_odometry_calib', 'dataset', 'sequences', 
+            #             args.sequence, 'calib.txt'))
             current_epoch = (datetime.utcnow() - datetime(1970, 1, 1)).total_seconds()
             # Export
             if args.kitti_type.find("gray") != -1:
