@@ -109,6 +109,7 @@ def save_camera_data(bag, kitti_type, kitti, util, bridge, camera, camera_frame_
         camera_pad = '{0:02d}'.format(camera)
         image_dir = os.path.join(kitti.data_path, 'image_{}'.format(camera_pad))
         image_path = os.path.join(image_dir, 'data')
+        assert os.path.exists(image_path)
         image_filenames = sorted(os.listdir(image_path))
         with open(os.path.join(image_dir, 'timestamps.txt')) as f:
             image_datetimes = map(lambda x: datetime.strptime(x[:-4], '%Y-%m-%d %H:%M:%S.%f'), f.readlines())
@@ -163,7 +164,9 @@ def save_velo_data(bag, kitti, velo_frame_id, topic, initial_time):
     print("Exporting velodyne data")
     velo_path = os.path.join(kitti.base_path, 'sequences', kitti.sequence, 'velodyne')
     label_path = os.path.join(kitti.base_path, 'sequences', kitti.sequence, 'labels')
-     
+    assert os.path.exists(velo_path)
+    assert os.path.exists(label_path)
+
     # velo_data_dir = os.path.join(velo_path, 'data')
     velo_data_dir = velo_path
     velo_filenames = sorted(os.listdir(velo_data_dir))
@@ -183,7 +186,6 @@ def save_velo_data(bag, kitti, velo_frame_id, topic, initial_time):
         scan = (np.fromfile(velo_filename, dtype=np.float32)).reshape(-1, 4)[:, :3]
         # read semantic labels
         label = np.fromfile(os.path.join(label_path, label_filename), dtype=np.uint32).reshape((-1,1))
-        # scan_l = np.hstack((scan, label))
         scan_l = scan.tolist()
         for i in range(len(scan_l)):
             scan_l[i].extend(label[i])
