@@ -161,9 +161,6 @@ def save_camera_data(bag, kitti_type, kitti, util, bridge, camera, camera_frame_
         
 def save_velo_data(bag, kitti, velo_frame_id, topic, initial_time):
     print("Exporting velodyne data")
-    # velo_path = os.path.join(kitti.data_path, 'velodyne_points')
-    # velo_path = os.path.join(kitti.base_path, 'data_odometry_velodyne',
-    #             'dataset', 'sequences', kitti.sequence, 'velodyne')
     velo_path = os.path.join(kitti.base_path, 'sequences', kitti.sequence, 'velodyne')
     label_path = os.path.join(kitti.base_path, 'sequences', kitti.sequence, 'labels')
      
@@ -172,15 +169,6 @@ def save_velo_data(bag, kitti, velo_frame_id, topic, initial_time):
     velo_filenames = sorted(os.listdir(velo_data_dir))
     label_filenames = sorted(os.listdir(label_path))
     
-    # with open(os.path.join(velo_path, 'timestamps.txt')) as f:
-    #     lines = f.readlines()
-    #     velo_datetimes = []
-    #     for line in lines:
-    #         if len(line) == 1:
-    #             continue
-    #         dt = datetime.strptime(line[:-4], '%Y-%m-%d %H:%M:%S.%f')
-    #         velo_datetimes.append(dt)
-
     velo_datetimes = map(lambda x: initial_time + x.total_seconds(), kitti.timestamps)
 
     iterable = zip(velo_datetimes, velo_filenames, label_filenames)
@@ -389,32 +377,19 @@ def run_kitti2bag():
             print("Usage for odometry dataset: kitti2bag {odom_color, odom_gray} [dir] -s <sequence>")
             sys.exit(1)
             
-        # bag = rosbag.Bag("kitti_data_odometry_{}_sequence_{}.bag".format(args.kitti_type[5:],args.sequence), 'w', compression=compression)
         bag = rosbag.Bag(os.path.join(args.out_path, "kitti_data_odometry_{}_sequence_{}.bag".format(args.kitti_type[5:],args.sequence)), 'w', compression=compression)
         
         kitti = pykitti.odometry(args.dir, args.sequence)
-        # if not os.path.exists(kitti.sequence_path):
-        #     print('Path {} does not exists. Exiting.'.format(kitti.sequence_path))
         if not os.path.exists(kitti.base_path):
             print('Path {} does not exists. Exiting.'.format(kitti.base_path))
             sys.exit(1)
-
-        # kitti.load_calib()         
-        # kitti.load_timestamps() 
-             
+     
         if len(kitti.timestamps) == 0:
             print('Dataset is empty? Exiting.')
             sys.exit(1)
             
-        # if args.sequence in odometry_sequences[:11]:
-        #     print("Odometry dataset sequence {} has ground truth information (poses).".format(args.sequence))
-        #     kitti.load_poses()
-
         try:
             util = pykitti.utils.read_calib_file(os.path.join(args.dir,'sequences',args.sequence, 'calib.txt'))
-            # util = pykitti.utils.read_calib_file(os.path.join(args.dir,
-            #             'data_odometry_calib', 'dataset', 'sequences', 
-            #             args.sequence, 'calib.txt'))
             current_epoch = (datetime.utcnow() - datetime(1970, 1, 1)).total_seconds()
             # Export
             if args.kitti_type.find("gray") != -1:
