@@ -165,11 +165,12 @@ def save_velo_data(bag, kitti, velo_frame_id, topic, initial_time):
     # velo_path = os.path.join(kitti.base_path, 'data_odometry_velodyne',
     #             'dataset', 'sequences', kitti.sequence, 'velodyne')
     velo_path = os.path.join(kitti.base_path, 'sequences', kitti.sequence, 'velodyne')
-    velo_path = os.path.join(kitti.base_path, 'data_odometry_velodyne',
-                'dataset', 'sequences', kitti.sequence, 'velodyne')
+    label_path = os.path.join(kitti.base_path, 'sequences', kitti.sequence, 'labels')
+     
     # velo_data_dir = os.path.join(velo_path, 'data')
     velo_data_dir = velo_path
     velo_filenames = sorted(os.listdir(velo_data_dir))
+    label_filenames = sorted(os.listdir(label_path))
     
     # with open(os.path.join(velo_path, 'timestamps.txt')) as f:
     #     lines = f.readlines()
@@ -182,17 +183,22 @@ def save_velo_data(bag, kitti, velo_frame_id, topic, initial_time):
 
     velo_datetimes = map(lambda x: initial_time + x.total_seconds(), kitti.timestamps)
 
-    iterable = zip(velo_datetimes, velo_filenames)
+    iterable = zip(velo_datetimes, velo_filenames, label_filenames)
     bar = progressbar.ProgressBar()
-    for dt, filename in bar(iterable):
+    for dt, filename, label_filename in bar(iterable):
         if dt is None:
             continue
 
         velo_filename = os.path.join(velo_data_dir, filename)
 
         # read binary data
-        scan = (np.fromfile(velo_filename, dtype=np.float32)).reshape(-1, 4)
-
+        scan = (np.fromfile(velo_filename, dtype=np.float32)).reshape(-1, 4)[:, :3]
+        # read semantic labels
+        label = np.fromfile(os.path.join(label_path, label_filename), dtype=np.uint32).reshape((-1,1))
+        # scan_l = np.hstack((scan, label))
+        scan_l = scan.tolist()
+        for i in range(len(scan_l)):
+            scan_l[i].extend(label[i])
         # create header
         header = Header()
         header.frame_id = velo_frame_id
