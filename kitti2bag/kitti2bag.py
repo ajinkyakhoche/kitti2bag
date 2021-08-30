@@ -292,7 +292,7 @@ def run_kitti2bag():
     parser.add_argument("-t", "--date", help = "date of the raw dataset (i.e. 2011_09_26), option is only for RAW datasets.")
     parser.add_argument("-r", "--drive", help = "drive number of the raw dataset (i.e. 0001), option is only for RAW datasets.")
     parser.add_argument("-s", "--sequence", choices = odometry_sequences,help = "sequence of the odometry dataset (between 00 - 21), option is only for ODOMETRY datasets.")
-    parser.add_argument("-o", "--out_path", help = "Output directory to save Rosbags.")
+    parser.add_argument("-o", "--out_path", default='.', help = "Output directory to save Rosbags.")
     args = parser.parse_args()
 
     bridge = CvBridge()
@@ -379,7 +379,7 @@ def run_kitti2bag():
             sys.exit(1)
             
         # bag = rosbag.Bag("kitti_data_odometry_{}_sequence_{}.bag".format(args.kitti_type[5:],args.sequence), 'w', compression=compression)
-        bag = rosbag.Bag(os.path.join(args.out_path, "kitti_data_odometry_{}_sequence_{}.bag".format(args.date, args.drive, args.kitti_type[4:])), 'w', compression=compression)
+        bag = rosbag.Bag(os.path.join(args.out_path, "kitti_data_odometry_{}_sequence_{}.bag".format(args.kitti_type[5:],args.sequence)), 'w', compression=compression)
         
         kitti = pykitti.odometry(args.dir, args.sequence)
         # if not os.path.exists(kitti.sequence_path):
