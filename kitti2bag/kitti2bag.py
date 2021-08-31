@@ -202,6 +202,140 @@ def save_velo_data(bag, kitti, velo_frame_id, topic, initial_time):
         bag.write(topic + '/pointcloud', pcl_msg, t=pcl_msg.header.stamp)
 
 
+def save_fusion_data(bag, kitti_type, kitti, util, bridge, used_cameras, velo_frame_id, velo_topic, initial_time):
+    print("Exporting cam lidar fusion data")
+    velo_path = os.path.join(kitti.base_path, 'sequences', kitti.sequence, 'velodyne')
+    label_path = os.path.join(kitti.base_path, 'sequences', kitti.sequence, 'labels')
+    assert os.path.exists(velo_path)
+    assert os.path.exists(label_path)
+
+    velo_filenames = sorted(os.listdir(velo_path))
+    label_filenames = sorted(os.listdir(label_path))
+    velo_datetimes = map(lambda x: initial_time + x.total_seconds(), kitti.timestamps)
+
+    camera=used_cameras[0][0]; camera_frame_id=used_cameras[0][1]; img_topic=used_cameras[0][2]
+    if kitti_type.find("raw") != -1:
+        camera_pad = '{0:02d}'.format(camera)
+        image_dir = os.path.join(kitti.data_path, 'image_{}'.format(camera_pad))
+        image_path = os.path.join(image_dir, 'data')
+        assert os.path.exists(image_path)
+        image_filenames = sorted(os.listdir(image_path))
+        with open(os.path.join(image_dir, 'timestamps.txt')) as f:
+            image_datetimes = map(lambda x: datetime.strptime(x[:-4], '%Y-%m-%d %H:%M:%S.%f'), f.readlines())
+        
+        calib = CameraInfo()
+        calib.header.frame_id = camera_frame_id
+        calib.width, calib.height = tuple(util['S_rect_{}'.format(camera_pad)].tolist())
+        calib.distortion_model = 'plumb_bob'
+        calib.K = util['K_{}'.format(camera_pad)]
+        calib.R = util['R_rect_{}'.format(camera_pad)]
+        calib.D = util['D_{}'.format(camera_pad)]
+        calib.P = util['P_rect_{}'.format(camera_pad)]
+            
+    elif kitti_type.find("odom") != -1:
+        camera_pad = '{0:01d}'.format(camera)
+        image_path = os.path.join(kitti.sequence_path, 'image_{}'.format(camera_pad))
+        assert os.path.exists(image_path)
+        image_filenames = sorted(os.listdir(image_path))
+        image_datetimes = map(lambda x: initial_time + x.total_seconds(), kitti.timestamps)
+        
+        calib = CameraInfo()
+        calib.header.frame_id = camera_frame_id
+        calib.P = util['P{}'.format(camera_pad)]
+    
+    
+    iterable = zip(velo_datetimes, velo_filenames, label_filenames, image_datetimes, image_filenames)
+    bar = progressbar.ProgressBar()
+    for dt, velo_filename, label_filename, dt_img, image_filename, in bar(iterable):
+        if dt is None:
+            continue
+        # read binary data
+        scan = (np.fromfile(os.path.join(velo_path, velo_filename), dtype=np.float32)).reshape(-1, 4)[:, :3]
+        # read semantic labels
+        label = np.fromfile(os.path.join(label_path, label_filename), dtype=np.uint32).reshape((-1,1))
+        
+        # read image data
+        cv_image = cv2.imread(os.path.join(image_path, image_filename))
+        calib.height, calib.width = cv_image.shape[:2]
+        if camera in (0, 1):
+            cv_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2GRAY)
+        
+        # # write image topic
+        # encoding = "mono8" if camera in (0, 1) else "bgr8"
+        # image_message = bridge.cv2_to_imgmsg(cv_image, encoding=encoding)
+        # image_message.header.frame_id = camera_frame_id
+        # if kitti_type.find("raw") != -1:
+        #     image_message.header.stamp = rospy.Time.from_sec(float(datetime.strftime(dt, "%s.%f")))
+        #     topic_ext = "/image_raw"
+        # elif kitti_type.find("odom") != -1:
+        #     image_message.header.stamp = rospy.Time.from_sec(dt)
+        #     topic_ext = "/image_rect"
+        # calib.header.stamp = image_message.header.stamp
+        # bag.write(topic + topic_ext, image_message, t = image_message.header.stamp)
+        # bag.write(topic + '/camera_info', calib, t = calib.header.stamp) 
+        
+        colors = colorify_lidar(scan, cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB), util, camera)
+
+        scan_xyzrgbl = scan.tolist()
+        for i in range(scan.shape[0]):
+            scan_xyzrgbl[i].extend(colors[i])
+            scan_xyzrgbl[i].extend(label[i])
+        
+        # write lidar topic
+        # create header
+        header = Header()
+        header.frame_id = velo_frame_id
+        # for raw
+        # header.stamp = rospy.Time.from_sec(float(datetime.strftime(dt, "%s.%f")))
+        header.stamp = rospy.Time.from_sec(dt)
+
+        # fill pcl msg
+        fields = [PointField('x', 0, PointField.FLOAT32, 1),
+                    PointField('y', 4, PointField.FLOAT32, 1),
+                    PointField('z', 8, PointField.FLOAT32, 1),
+                #   PointField('i', 12, PointField.FLOAT32, 1)
+                    PointField('r', 12, PointField.UINT32, 1),
+                    PointField('g', 12, PointField.UINT32, 1),
+                    PointField('b', 12, PointField.UINT32, 1),
+                    PointField('l', 12, PointField.UINT32, 1)
+                ]
+        pcl_msg = pcl2.create_cloud(header, fields, scan_xyzrgbl)
+
+        bag.write(velo_topic + '/pointcloud', pcl_msg, t=pcl_msg.header.stamp)
+
+def colorify_lidar(scan, cv_image, util, cam_ind):
+    (height, width, ch) = cv_image.shape
+    n = scan.shape[0]
+    scan_hom = np.hstack((scan, np.ones((n, 1))))
+
+    P = np.vstack((util['P{}'.format(cam_ind)].reshape((3,4)), np.array([0.,0.,0.,1.])))
+    Tr = np.vstack((util['Tr'].reshape((3,4)), np.array([0.,0.,0.,1.])))
+    pc_velo = (Tr @ scan_hom.T).T
+    pts = P @ pc_velo.T
+    pts = pts.T
+    pts[:, 0] /= pts[:, 2]
+    pts[:, 1] /= pts[:, 2]
+    pts_2d = pts[:,0:2]
+    fov_inds = (pts_2d[:, 0] < width - 1) & (pts_2d[:, 0] >= 0) & \
+                (pts_2d[:, 1] < height - 1) & (pts_2d[:, 1] >= 0)
+    fov_inds = fov_inds & (pc_velo[:, 2] > 2)       
+    
+    # imgfov_pc_velo = pc_velo[fov_inds, :]
+    # imgfov_pts_2d = pts_2d[fov_inds, :]
+    # depth_map = np.zeros((height, width))
+    # imgfov_pts_2d = np.round(imgfov_pts_2d).astype(int)
+    # depth_map[imgfov_pts_2d[:,1], imgfov_pts_2d[:,0]] = imgfov_pc_velo [:, 2]
+    
+    # # plt.imshow(depth_map), plt.show()
+    # print("Density of PC is : %f"%(np.count_nonzero(depth_map)/float(depth_map.size)))
+    # color = np.ones((scan.shape[0], 3)).astype(int) * 128
+    # for i, pt_2d in enumerate(pts_2d):
+    #     if fov_inds[i]:
+    #         # cv_image[np.round(pt_2d).astype(int), :]
+    #         color[i, :] = cv_image[np.round(pt_2d).astype(int)[1], np.round(pt_2d).astype(int)[0], :]
+    colors = [cv_image[np.round(pt_2d).astype(int)[1], np.round(pt_2d).astype(int)[0], :] if fov_inds[i] else np.array([128,128,128]) for i, pt_2d in enumerate(pts_2d)]
+    return colors
+          
 def get_static_transform(from_frame_id, to_frame_id, transform):
     t = transform[0:3, 3]
     q = tf.transformations.quaternion_from_matrix(transform)
@@ -399,10 +533,11 @@ def run_kitti2bag():
 
             save_static_transforms(bag, transforms, kitti.timestamps, current_epoch, args.kitti_type)
             save_dynamic_tf(bag, kitti, args.kitti_type, initial_time=current_epoch)
-            save_velo_data(bag, kitti, velo_frame_id, velo_topic, current_epoch)
+            # save_velo_data(bag, kitti, velo_frame_id, velo_topic, current_epoch)
             # for camera in used_cameras:
             #     save_camera_data(bag, args.kitti_type, kitti, util, bridge, camera=camera[0], camera_frame_id=camera[1], topic=camera[2], initial_time=current_epoch)
 
+            save_fusion_data(bag, args.kitti_type, kitti, util, bridge, used_cameras, velo_frame_id, velo_topic, current_epoch)
         finally:
             print("## OVERVIEW ##")
             print(bag)
