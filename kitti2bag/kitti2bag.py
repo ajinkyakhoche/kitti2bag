@@ -24,6 +24,7 @@ from geometry_msgs.msg import TransformStamped, TwistStamped, Transform
 from cv_bridge import CvBridge
 import numpy as np
 import argparse
+import struct
 
 def save_imu_data(bag, kitti, imu_frame_id, topic):
     print("Exporting IMU")
@@ -259,6 +260,8 @@ def save_fusion_data(bag, kitti_type, kitti, util, bridge, used_cameras, velo_fr
         calib.height, calib.width = cv_image.shape[:2]
         if camera in (0, 1):
             cv_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2GRAY)
+        else:
+            cv_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB)
         
         # # write image topic
         # encoding = "mono8" if camera in (0, 1) else "bgr8"
@@ -274,12 +277,23 @@ def save_fusion_data(bag, kitti_type, kitti, util, bridge, used_cameras, velo_fr
         # bag.write(topic + topic_ext, image_message, t = image_message.header.stamp)
         # bag.write(topic + '/camera_info', calib, t = calib.header.stamp) 
         
-        colors = colorify_lidar(scan, cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB), util, camera)
+        pts_2d, fov_inds = colorify_lidar(scan, cv_image, util, camera)
 
-        scan_xyzrgbl = scan.tolist()
-        for i in range(scan.shape[0]):
-            scan_xyzrgbl[i].extend(colors[i])
-            scan_xyzrgbl[i].extend(label[i])
+        colors_visible = [cv_image[np.round(pt_2d).astype(int)[1], np.round(pt_2d).astype(int)[0], :] for i, pt_2d in enumerate(pts_2d) if fov_inds[i]]
+        scan_visible = scan[fov_inds, :]
+        label_visible = label[fov_inds,:]
+
+        rgb = [struct.unpack('I', struct.pack('BBBB', c[0][2], c[0][1], c[0][0], 255))[0] for c in zip(colors_visible)]
+
+        # scan_xyzrgbl = scan.tolist()
+        scan_xyzrgbl = scan_visible.tolist()
+        # for i in range(scan.shape[0]):
+            # scan_xyzrgbl[i].extend(colors[i])
+            # scan_xyzrgbl[i].extend(label[i])
+        for i in range(len(scan_xyzrgbl)):
+            # scan_xyzrgbl[i].extend(colors_visible[i])
+            scan_xyzrgbl[i].extend([rgb[i]])
+            scan_xyzrgbl[i].extend(label_visible[i])
         
         # write lidar topic
         # create header
@@ -293,11 +307,12 @@ def save_fusion_data(bag, kitti_type, kitti, util, bridge, used_cameras, velo_fr
         fields = [PointField('x', 0, PointField.FLOAT32, 1),
                     PointField('y', 4, PointField.FLOAT32, 1),
                     PointField('z', 8, PointField.FLOAT32, 1),
-                #   PointField('i', 12, PointField.FLOAT32, 1)
-                    PointField('r', 12, PointField.UINT32, 1),
-                    PointField('g', 12, PointField.UINT32, 1),
-                    PointField('b', 12, PointField.UINT32, 1),
-                    PointField('l', 12, PointField.UINT32, 1)
+                    # # PointField('i', 12, PointField.FLOAT32, 1)
+                    # PointField('r', 12, PointField.UINT8, 1),
+                    # PointField('g', 13, PointField.UINT8, 1),
+                    # PointField('b', 14, PointField.UINT8, 1),
+                    PointField('rgb', 12, PointField.UINT32, 1),
+                    PointField('l', 16, PointField.UINT32, 1)
                 ]
         pcl_msg = pcl2.create_cloud(header, fields, scan_xyzrgbl)
 
@@ -328,13 +343,9 @@ def colorify_lidar(scan, cv_image, util, cam_ind):
     
     # # plt.imshow(depth_map), plt.show()
     # print("Density of PC is : %f"%(np.count_nonzero(depth_map)/float(depth_map.size)))
-    # color = np.ones((scan.shape[0], 3)).astype(int) * 128
-    # for i, pt_2d in enumerate(pts_2d):
-    #     if fov_inds[i]:
-    #         # cv_image[np.round(pt_2d).astype(int), :]
-    #         color[i, :] = cv_image[np.round(pt_2d).astype(int)[1], np.round(pt_2d).astype(int)[0], :]
-    colors = [cv_image[np.round(pt_2d).astype(int)[1], np.round(pt_2d).astype(int)[0], :] if fov_inds[i] else np.array([128,128,128]) for i, pt_2d in enumerate(pts_2d)]
-    return colors
+    
+    # colors = [cv_image[np.round(pt_2d).astype(int)[1], np.round(pt_2d).astype(int)[0], :] if fov_inds[i] else np.array([128,128,128]) for i, pt_2d in enumerate(pts_2d)]
+    return pts_2d, fov_inds
           
 def get_static_transform(from_frame_id, to_frame_id, transform):
     t = transform[0:3, 3]
@@ -507,7 +518,8 @@ def run_kitti2bag():
             print("Usage for odometry dataset: kitti2bag {odom_color, odom_gray} [dir] -s <sequence>")
             sys.exit(1)
             
-        bag = rosbag.Bag(os.path.join(args.out_path, "kitti_data_odometry_{}_sequence_{}.bag".format(args.kitti_type[5:],args.sequence)), 'w', compression=compression)
+        # bag = rosbag.Bag(os.path.join(args.out_path, "kitti_data_odometry_{}_sequence_{}.bag".format(args.kitti_type[5:],args.sequence)), 'w', compression=compression)
+        bag = rosbag.Bag(os.path.join(args.out_path, "kitti_data_odometry_{}_sequence_{}.bag".format('xyzrgbl',args.sequence)), 'w', compression=compression)
         
         kitti = pykitti.odometry(args.dir, args.sequence)
         if not os.path.exists(kitti.base_path):
