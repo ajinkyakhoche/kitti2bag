@@ -178,12 +178,14 @@ def save_velo_data(bag, kitti, velo_frame_id, topic, initial_time):
         velo_filename = os.path.join(velo_data_dir, filename)
 
         # read binary data
-        scan = (np.fromfile(velo_filename, dtype=np.float32)).reshape(-1, 4)[:, :3]
+        scan = (np.fromfile(velo_filename, dtype=np.float32)).reshape(-1, 4)[:, :4]
         # read semantic labels
         label = np.fromfile(os.path.join(label_path, label_filename), dtype=np.uint32).reshape((-1,1))
         scan_l = scan.tolist()
         for i in range(len(scan_l)):
-            scan_l[i].extend(label[i])
+            scan_l[i].extend([0])
+            scan_l[i].extend(label[i] & 0Xfff)
+            scan_l[i].extend(label[i] >> 16)
         # create header
         header = Header()
         header.frame_id = velo_frame_id
@@ -196,24 +198,31 @@ def save_velo_data(bag, kitti, velo_frame_id, topic, initial_time):
                   PointField('y', 4, PointField.FLOAT32, 1),
                   PointField('z', 8, PointField.FLOAT32, 1),
                 #   PointField('i', 12, PointField.FLOAT32, 1)
-                  PointField('l', 12, PointField.UINT32, 1)
+                  PointField('reflectance', 12, PointField.FLOAT32, 1),
+                  PointField('rgb', 16, PointField.UINT32, 1),      
+                  PointField('sem_gt', 20, PointField.UINT32, 1),
+                  PointField('panoptic_gt', 24, PointField.UINT16, 1),
                   ]
         pcl_msg = pcl2.create_cloud(header, fields, scan_l)
 
         bag.write(topic + '/pointcloud', pcl_msg, t=pcl_msg.header.stamp)
 
 
-def save_fusion_data(bag, kitti_type, kitti, util, bridge, used_cameras, velo_frame_id, velo_topic, initial_time):
+def save_fusion_data(bag, kitti_type, kitti, util, bridge, used_cameras, velo_frame_id, velo_topic, initial_time, test):
     print("Exporting cam lidar fusion data")
     velo_path = os.path.join(kitti.base_path, 'sequences', kitti.sequence, 'velodyne')
     label_path = os.path.join(kitti.base_path, 'sequences', kitti.sequence, 'labels')
     assert os.path.exists(velo_path)
-    assert os.path.exists(label_path)
-
     velo_filenames = sorted(os.listdir(velo_path))
-    label_filenames = sorted(os.listdir(label_path))
     velo_datetimes = map(lambda x: initial_time + x.total_seconds(), kitti.timestamps)
 
+    if not test:
+        assert os.path.exists(label_path)
+        label_filenames = sorted(os.listdir(label_path))
+    else:
+        label_filenames = velo_filenames.copy()
+
+    
     camera=used_cameras[0][0]; camera_frame_id=used_cameras[0][1]; img_topic=used_cameras[0][2]
     if kitti_type.find("raw") != -1:
         camera_pad = '{0:02d}'.format(camera)
@@ -251,10 +260,12 @@ def save_fusion_data(bag, kitti_type, kitti, util, bridge, used_cameras, velo_fr
         if dt is None:
             continue
         # read binary data
-        scan = (np.fromfile(os.path.join(velo_path, velo_filename), dtype=np.float32)).reshape(-1, 4)[:, :3]
-        # read semantic labels
-        label = np.fromfile(os.path.join(label_path, label_filename), dtype=np.uint32).reshape((-1,1))
+        scan = (np.fromfile(os.path.join(velo_path, velo_filename), dtype=np.float32)).reshape(-1, 4)#[:, :3]
         
+        if not test:
+            # read semantic labels
+            label = np.fromfile(os.path.join(label_path, label_filename), dtype=np.uint32).reshape((-1,1))
+            
         # read image data
         cv_image = cv2.imread(os.path.join(image_path, image_filename))
         calib.height, calib.width = cv_image.shape[:2]
@@ -277,23 +288,14 @@ def save_fusion_data(bag, kitti_type, kitti, util, bridge, used_cameras, velo_fr
         # bag.write(topic + topic_ext, image_message, t = image_message.header.stamp)
         # bag.write(topic + '/camera_info', calib, t = calib.header.stamp) 
         
-        pts_2d, fov_inds = colorify_lidar(scan, cv_image, util, camera)
+        pts_2d, fov_inds = colorify_lidar(scan[:,:3], cv_image, util, camera)
 
         colors_visible = [cv_image[np.round(pt_2d).astype(int)[1], np.round(pt_2d).astype(int)[0], :] for i, pt_2d in enumerate(pts_2d) if fov_inds[i]]
         scan_visible = scan[fov_inds, :]
-        label_visible = label[fov_inds,:]
-
-        rgb = [struct.unpack('I', struct.pack('BBBB', c[0][2], c[0][1], c[0][0], 255))[0] for c in zip(colors_visible)]
-
         # scan_xyzrgbl = scan.tolist()
         scan_xyzrgbl = scan_visible.tolist()
-        # for i in range(scan.shape[0]):
-            # scan_xyzrgbl[i].extend(colors[i])
-            # scan_xyzrgbl[i].extend(label[i])
-        for i in range(len(scan_xyzrgbl)):
-            # scan_xyzrgbl[i].extend(colors_visible[i])
-            scan_xyzrgbl[i].extend([rgb[i]])
-            scan_xyzrgbl[i].extend(label_visible[i])
+        
+        rgb = [struct.unpack('I', struct.pack('BBBB', c[0][2], c[0][1], c[0][0], 255))[0] for c in zip(colors_visible)]
         
         # write lidar topic
         # create header
@@ -303,17 +305,53 @@ def save_fusion_data(bag, kitti_type, kitti, util, bridge, used_cameras, velo_fr
         # header.stamp = rospy.Time.from_sec(float(datetime.strftime(dt, "%s.%f")))
         header.stamp = rospy.Time.from_sec(dt)
 
-        # fill pcl msg
-        fields = [PointField('x', 0, PointField.FLOAT32, 1),
-                    PointField('y', 4, PointField.FLOAT32, 1),
-                    PointField('z', 8, PointField.FLOAT32, 1),
-                    # # PointField('i', 12, PointField.FLOAT32, 1)
-                    # PointField('r', 12, PointField.UINT8, 1),
-                    # PointField('g', 13, PointField.UINT8, 1),
-                    # PointField('b', 14, PointField.UINT8, 1),
-                    PointField('rgb', 12, PointField.UINT32, 1),
-                    PointField('l', 16, PointField.UINT32, 1)
-                ]
+        for i in range(len(scan_xyzrgbl)):
+            # scan_xyzrgbl[i].extend(colors_visible[i])
+            scan_xyzrgbl[i].extend([rgb[i]])
+        
+        if not test:
+            label_visible = label[fov_inds,:]
+
+            # for i in range(scan.shape[0]):
+                # scan_xyzrgbl[i].extend(colors[i])
+                # scan_xyzrgbl[i].extend(label[i])
+            for i in range(len(scan_xyzrgbl)):
+                # scan_xyzrgbl[i].extend(colors_visible[i])
+                # scan_xyzrgbl[i].extend([rgb[i]])
+                # scan_xyzrgbl[i].extend(label_visible[i])
+                scan_xyzrgbl[i].extend(label_visible[i] & 0Xfff)
+                scan_xyzrgbl[i].extend(label_visible[i] >> 16)
+            
+        
+            # fill pcl msg
+            fields = [PointField('x', 0, PointField.FLOAT32, 1),
+                        PointField('y', 4, PointField.FLOAT32, 1),
+                        PointField('z', 8, PointField.FLOAT32, 1),
+                        # # PointField('i', 12, PointField.FLOAT32, 1)
+                        PointField('reflectance', 12, PointField.FLOAT32, 1),
+                        # PointField('r', 12, PointField.UINT8, 1),
+                        # PointField('g', 13, PointField.UINT8, 1),
+                        # PointField('b', 14, PointField.UINT8, 1),
+                        PointField('rgb', 16, PointField.UINT32, 1),
+                        # PointField('label', 16, PointField.UINT32, 1),
+                        PointField('sem_gt', 20, PointField.UINT16, 1),
+                        PointField('panoptic_gt', 24, PointField.UINT16, 1),
+                    ]
+        else:
+            # fill pcl msg
+            fields = [PointField('x', 0, PointField.FLOAT32, 1),
+                        PointField('y', 4, PointField.FLOAT32, 1),
+                        PointField('z', 8, PointField.FLOAT32, 1),
+                        # # PointField('i', 12, PointField.FLOAT32, 1)
+                        PointField('reflectance', 12, PointField.FLOAT32, 1),
+                        # PointField('r', 12, PointField.UINT8, 1),
+                        # PointField('g', 13, PointField.UINT8, 1),
+                        # PointField('b', 14, PointField.UINT8, 1),
+                        PointField('rgb', 16, PointField.UINT32, 1),
+                        # PointField('label', 16, PointField.UINT32, 1),
+                        # PointField('sem_gt', 20, PointField.UINT16, 1),
+                        # PointField('panoptic_gt', 24, PointField.UINT16, 1),
+                    ]
         pcl_msg = pcl2.create_cloud(header, fields, scan_xyzrgbl)
 
         bag.write(velo_topic + '/pointcloud', pcl_msg, t=pcl_msg.header.stamp)
@@ -436,9 +474,9 @@ def run_kitti2bag():
     args = parser.parse_args()
 
     bridge = CvBridge()
-    compression = rosbag.Compression.NONE
+    # compression = rosbag.Compression.NONE
     # compression = rosbag.Compression.BZ2
-    # compression = rosbag.Compression.LZ4
+    compression = rosbag.Compression.LZ4
     
     # CAMERAS
     cameras = [
@@ -549,7 +587,7 @@ def run_kitti2bag():
             # for camera in used_cameras:
             #     save_camera_data(bag, args.kitti_type, kitti, util, bridge, camera=camera[0], camera_frame_id=camera[1], topic=camera[2], initial_time=current_epoch)
 
-            save_fusion_data(bag, args.kitti_type, kitti, util, bridge, used_cameras, velo_frame_id, velo_topic, current_epoch)
+            save_fusion_data(bag, args.kitti_type, kitti, util, bridge, used_cameras, velo_frame_id, velo_topic, current_epoch, test=int(args.sequence)>=11)
         finally:
             print("## OVERVIEW ##")
             print(bag)
