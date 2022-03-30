@@ -310,7 +310,8 @@ def save_fusion_data(bag, kitti_type, kitti, util, bridge, used_cameras, velo_fr
             scan_xyzrgbl[i].extend([rgb[i]])
         
         if not test:
-            label_visible = label[fov_inds,:]
+            # label_visible = label[fov_inds,:]
+            label_visible = label
 
             # for i in range(scan.shape[0]):
                 # scan_xyzrgbl[i].extend(colors[i])
